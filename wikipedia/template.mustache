@@ -1,0 +1,20 @@
+class CountryConfig
+  class << self
+    def config
+      {
+      {{#countries}}
+        {{country_code}}: {
+          name: '{{country_name}}',
+          code: '{{country_code}}',
+          bban_format: '{{bban_format}}',
+          iban_length: {{iban_length}},
+          bank_code: {{national_bank_code_indexes}},
+          branch_code: {{branch_code_indexes}},
+          national_checksum: {{national_checksum_indexes}},
+          account_number: {{account_number_indexes}},
+          },
+      {{/countries}}
+      }
+    end
+  end
+end
