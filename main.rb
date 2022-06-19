@@ -72,7 +72,7 @@ def get_account_number(iban)
   get_part_of_iban(iban, 'account_number')
 end
 
-def weighted(text, weights, modulo, postproc, prezip = -> x { x }, presum = -> x { x })
+def weighted(text, weights, modulo, postproc, prezip: -> x { x }, presum: -> x { x })
   text
     .split('')
     .map(&:to_i)
@@ -203,7 +203,7 @@ end
 def estonia_validate(iban)
   calculated_checksum = get_branch_code(iban)
                           .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| weighted(x, [7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }, -> y { y.reverse }) }
+                          .fmap { |x| weighted(x, [7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }, prezip: -> y { y.reverse }) }
   # .fmap { |x| x.split('') }
   # .fmap { |x| x.map { |chr| chr.to_i } }
   # .fmap { |x| x.reverse }
@@ -218,7 +218,7 @@ end
 def finland_validate(iban)
   calculated_checksum = get_bank_code(iban)
                           .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| weighted(x, [2, 1], 10, -> y { y == 0 ? 0 : 10 - y }, -> y { y }, -> y { y.map { |num| num % 10 + num / 10 } }) }
+                          .fmap { |x| weighted(x, [2, 1], 10, -> y { y == 0 ? 0 : 10 - y }, presum: -> y { y.map { |num| num % 10 + num / 10 } }) }
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
