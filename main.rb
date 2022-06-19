@@ -72,13 +72,14 @@ def get_account_number(iban)
   get_part_of_iban(iban, 'account_number')
 end
 
-def weighted(text, weights, modulo, postproc, prezip = -> x { x })
+def weighted(text, weights, modulo, postproc, prezip = -> x { x }, presum = -> x { x })
   text
     .split('')
     .map(&:to_i)
     .then { |x| prezip.call(x) }
     .zip(weights.cycle)
     .map { |num, weight| num * weight }
+    .then { |x| presum.call(x) }
     .sum
     .then { |x| x % modulo }
     .then { |x| postproc.call(x) }
@@ -218,14 +219,7 @@ end
 def finland_validate(iban)
   calculated_checksum = get_bank_code(iban)
                           .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| x.split('') }
-                          .fmap { |x| x.map { |chr| chr.to_i } }
-                          .fmap { |x| x.zip([2, 1].cycle) }
-                          .fmap { |x| x.map { |num, weight| num * weight } }
-                          .fmap { |x| x.map { |num| num % 10 + num / 10 } }
-                          .fmap { |x| x.sum }
-                          .fmap { |x| x % 10 }
-                          .fmap { |x| x == 0 ? 0 : 10 - x }
+                          .fmap { |x| weighted(x, [2, 1], 10, -> y { y == 0 ? 0 : 10 - y }, -> y { y }, -> y { y.map { |num| num % 10 + num / 10 } }) }
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
@@ -278,7 +272,7 @@ def france_validate(iban)
                           .fmap { |x| x.map { |e| e.map { |l| french_letter_to_digit(l).to_s } } }
                           .fmap { |x| x.map { |e| e.join } }
                           .fmap { |x| x.map &:to_i }
-                          .fmap { |x| x.zip([89, 15, 3]) }
+                          .fmap { |x| x.zip([89, 15, 3]) } # no idea where these come from
                           .fmap { |x| x.map { |num, weight| num * weight } }
                           .fmap { |x| x.sum }
                           .fmap { |x| x % 97 }
