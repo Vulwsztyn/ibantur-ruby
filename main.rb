@@ -72,16 +72,22 @@ def get_account_number(iban)
   get_part_of_iban(iban, 'account_number')
 end
 
+def weighted(text, weights, modulo, postproc, prezip = -> x { x })
+  text
+    .split('')
+    .map(&:to_i)
+    .then { |x| prezip.call(x) }
+    .zip(weights.cycle)
+    .map { |num, weight| num * weight }
+    .sum
+    .then { |x| x % modulo }
+    .then { |x| postproc.call(x) }
+end
+
 def albania_validate(iban)
   calculated_checksum = get_bank_code(iban)
                           .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| x.split('') }
-                          .fmap { |x| x.map { |chr| chr.to_i } }
-                          .fmap { |x| x.zip([9, 7, 3, 1, 9, 7, 3, 1]) }
-                          .fmap { |x| x.map { |num, weight| num * weight } }
-                          .fmap { |x| x.sum }
-                          .fmap { |x| x % 10 }
-                          .fmap { |x| x == 0 ? 0 : 10 - x }
+                          .fmap { |x| weighted(x, [9, 7, 3, 1, 9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
@@ -94,15 +100,15 @@ def belgium_validate(iban)
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
-def iso7064_mod97_10(str)
-  ai = 1
-  check = str[-1].to_i
-  str[...-1].reverse.each_char do |ch|
-    ai = (ai * 10) % 97
-    check += ai * ch.to_i
-  end
-  98 - (check % 97)
-end
+# def iso7064_mod97_10(str)
+#   ai = 1
+#   check = str[-1].to_i
+#   str[...-1].reverse.each_char do |ch|
+#     ai = (ai * 10) % 97
+#     check += ai * ch.to_i
+#   end
+#   98 - (check % 97)
+# end
 
 # def bosnia_and_herzegovina_validate(iban)
 #   intermediate_checksum = get_bank_code(iban)
@@ -145,21 +151,9 @@ end
 
 def czech_validate(iban)
   calculated_checksum_acc_number = get_account_number(iban)
-                                     .fmap { |x| x.split('') }
-                                     .fmap { |x| x.map { |chr| chr.to_i } }
-                                     .fmap { |x| x.zip([6, 3, 7, 9, 10, 5, 8, 4, 2, 1]) }
-                                     .fmap { |x| x.map { |num, weight| num * weight } }
-                                     .fmap { |x| x.sum }
-                                     .fmap { |x| x % 11 }
-                                     .fmap { |x| x == 0 ? 0 : 11 - x }
+                                     .fmap { |x| weighted(x, [6, 3, 7, 9, 10, 5, 8, 4, 2, 1], 11, -> y { y == 0 ? 0 : 11 - y }) }
   calculated_checksum_branch_number = get_branch_code(iban)
-                                        .fmap { |x| x.split('') }
-                                        .fmap { |x| x.map { |chr| chr.to_i } }
-                                        .fmap { |x| x.zip([10, 5, 8, 4, 2, 1]) }
-                                        .fmap { |x| x.map { |num, weight| num * weight } }
-                                        .fmap { |x| x.sum }
-                                        .fmap { |x| x % 11 }
-                                        .fmap { |x| x == 0 ? 0 : 11 - x }
+                                        .fmap { |x| weighted(x, [10, 5, 8, 4, 2, 1], 11, -> y { y == 0 ? 0 : 11 - y }) }
   acc_matches = calculated_checksum_acc_number.bind { |x| x == 0 ? Success(x) : Failure("Niepoprawna suma kontrolna - #{x}. Powinna być 0.") }
   branch_matches = calculated_checksum_branch_number.bind { |x| x == 0 ? Success(x) : Failure("Niepoprawna suma kontrolna - #{x}. Powinna być 0.") }
   # TODO - combaing failures
@@ -207,17 +201,17 @@ def east_timor_validate(iban)
 end
 
 def estonia_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(y) }, -> y { Failure(y) }) }
+  calculated_checksum = get_branch_code(iban)
                           .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| x.split('') }
-                          .fmap { |x| x.map { |chr| chr.to_i } }
-                          .fmap { |x| x.reverse }
-                          .fmap { |x| x.zip([7, 3, 1].cycle) }
-                          .fmap { |x| x.map { |num, weight| num * weight } }
-                          .fmap { |x| x.sum }
-                          .fmap { |x| x % 10 }
-                          .fmap { |x| x == 0 ? 0 : 10 - x }
+                          .fmap { |x| weighted(x, [7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }, -> y { y.reverse }) }
+  # .fmap { |x| x.split('') }
+  # .fmap { |x| x.map { |chr| chr.to_i } }
+  # .fmap { |x| x.reverse }
+  # .fmap { |x| x.zip([7, 3, 1].cycle) }
+  # .fmap { |x| x.map { |num, weight| num * weight } }
+  # .fmap { |x| x.sum }
+  # .fmap { |x| x % 10 }
+  # .fmap { |x| x == 0 ? 0 : 10 - x }
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
@@ -294,21 +288,9 @@ end
 
 def hungary_validate(iban)
   calculated_checksum_bank_code = get_bank_code(iban)
-                                    .fmap { |x| x.split('') }
-                                    .fmap { |x| x.map { |chr| chr.to_i } }
-                                    .fmap { |x| x.zip([9, 7, 3, 1].cycle) }
-                                    .fmap { |x| x.map { |num, weight| num * weight } }
-                                    .fmap { |x| x.sum }
-                                    .fmap { |x| x % 10 }
-                                    .fmap { |x| x == 0 ? 0 : 10 - x }
+                                    .fmap { |x| weighted(x, [9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
   calculated_checksum_branch_number = get_branch_code(iban)
-                                        .fmap { |x| x.split('') }
-                                        .fmap { |x| x.map { |chr| chr.to_i } }
-                                        .fmap { |x| x.zip([9, 7, 3, 1].cycle) }
-                                        .fmap { |x| x.map { |num, weight| num * weight } }
-                                        .fmap { |x| x.sum }
-                                        .fmap { |x| x % 10 }
-                                        .fmap { |x| x == 0 ? 0 : 10 - x }
+                                        .fmap { |x| weighted(x, [9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
   national_checksum = get_account_number(iban) # this is not technically correct since they are not consecutive
   if national_checksum.failure?
     return national_checksum
@@ -327,13 +309,7 @@ end
 def iceland_validate(iban)
   kennitala = iban[16..]
   calculated_checksum = Success(kennitala[0...8])
-                          .fmap { |x| x.split('') }
-                          .fmap { |x| x.map { |chr| chr.to_i } }
-                          .fmap { |x| x.zip([3, 2, 7, 6, 5, 4, 3, 2].cycle) }
-                          .fmap { |x| x.map { |num, weight| num * weight } }
-                          .fmap { |x| x.sum }
-                          .fmap { |x| x % 11 }
-                          .fmap { |x| x == 0 ? 0 : 11 - x }
+                          .fmap { |x| weighted(x, [3, 2, 7, 6, 5, 4, 3, 2], 11, -> y { y == 0 ? 0 : 11 - y }) }
   checksum = kennitala[8].to_i
   calculated_checksum.bind { |x| checksum == x ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{checksum}. Powinna być #{calculated_checksum.value!}: #{iban}") }
 end
@@ -361,7 +337,7 @@ def italy_validate(iban)
                           .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
                           .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
                           .fmap { |x| x.split('') }
-                          .fmap { |x| x.each_with_index.map { |chr, i| (i+1).even? ? even_map(chr) : odd_map(chr) } }
+                          .fmap { |x| x.each_with_index.map { |chr, i| (i + 1).even? ? even_map(chr) : odd_map(chr) } }
                           .fmap { |x| x.sum }
                           .fmap { |x| x % 26 }
                           .fmap { |x| ('A'.ord + x).chr }
