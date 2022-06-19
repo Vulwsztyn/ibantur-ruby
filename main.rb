@@ -85,6 +85,14 @@ def weighted(text, weights, modulo, postproc, prezip = -> x { x }, presum = -> x
     .then { |x| postproc.call(x) }
 end
 
+def iso7064_mod97_10(text, modulo: 97, minuend: 98, premod: -> x { x * 100 })
+  text
+    .to_i
+    .then { |x| premod.call(x) }
+    .then { |x| x % modulo }
+    .then { |x| minuend - x }
+end
+
 def albania_validate(iban)
   calculated_checksum = get_bank_code(iban)
                           .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
@@ -185,19 +193,10 @@ end
 # _iban_nationalchecksum_implementation_mod97_10
 # montenegro, macedionia, serbia, solvenia
 
-def iso7064_mod97_10(input)
-  # potrugal and east timor
-  p = input.to_i * 100 % 97
-  checksum = (98 - p)
-  checksum
-end
-
 def east_timor_validate(iban)
   calculated_checksum = get_bank_code(iban)
                           .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| x.to_i }
-                          .fmap { |x| x * 100 % 97 }
-                          .fmap { |x| 98 - x }
+                          .fmap { |x| iso7064_mod97_10(x) }
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
@@ -275,8 +274,8 @@ def france_validate(iban)
                           .fmap { |x| x.zip([89, 15, 3]) } # no idea where these come from
                           .fmap { |x| x.map { |num, weight| num * weight } }
                           .fmap { |x| x.sum }
-                          .fmap { |x| x % 97 }
-                          .fmap { |x| 97 - x }
+                          .fmap { |x| iso7064_mod97_10(x, minuend: 97, premod: -> x { x }) }
+
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
@@ -338,6 +337,22 @@ def italy_validate(iban)
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
+def north_macedonia_validate(iban)
+  calculated_checksum = get_bank_code(iban)
+                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
+                          .fmap { |x| iso7064_mod97_10(x) }
+
+  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+end
+
+def mauritania_validate(iban)
+  calculated_checksum = get_bank_code(iban)
+                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
+                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
+                          .fmap { |x| iso7064_mod97_10(x, minuend: 97) }
+  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+end
+
 def local_validate(iban)
   procs = {
     AL: -> x { albania_validate(x) },
@@ -352,6 +367,8 @@ def local_validate(iban)
     HU: -> x { hungary_validate(x) },
     IS: -> x { iceland_validate(x) },
     IT: -> x { italy_validate(x) },
+    MK: -> x { north_macedonia_validate(x) },
+    MR: -> x { mauritania_validate(x) },
   }
   country_code = get_country_code(iban).to_sym
   procs.key?(country_code) ? procs[country_code].call(iban) : Failure("No way to validate for country #{country_code}")
@@ -364,7 +381,7 @@ def validate_iban(number)
     .bind { |x| local_validate(x) }
 end
 
-done = ['al', 'be', 'ba', 'hr', 'cz', 'tl', 'ee', 'fi', 'fr', 'hu', 'is', 'it']
+done = ['al', 'be', 'ba', 'hr', 'cz', 'tl', 'ee', 'fi', 'fr', 'hu', 'is', 'it', 'mk', 'mr']
 done.each do |country_code|
   file = File.open("./example-ibans/#{country_code}-ibans")
 
