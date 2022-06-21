@@ -10,7 +10,7 @@ extend Dry::Monads[:result]
 require_relative "./country_config.rb"
 
 def clean_iban(number)
-  Success(number.gsub(/[^a-z0-9]/i, '').upcase)
+  Success(number.gsub(/[^a-z\d]/i, '').upcase)
 end
 
 def global_validate(iban)
@@ -21,10 +21,14 @@ def global_validate(iban)
     .bind { |x| x == checksum ? Success(iban) : Failure("#{iban}: Niepoprawna suma kontrolna - #{checksum}. Powinna być #{x}") }
 end
 
+def concat_results(arr_of_results, concat_fn: -> x, y { x + y })
+  arr_of_results.inject { |acc, num| acc.either(-> a { num.either(-> n { Success(concat_fn.call(a, n)) }, -> _ { num }) }, -> _ { acc }) }
+end
+
 def calculate_checksum(number)
   Success(number)
     .bind { |x| x.split('').map { |chr| to_hexatrigesimal(chr) } }
-    .then { |x| x.inject(Success('')) { |acc, num| acc.either(-> a { num.either(-> n { Success(a + n) }, -> _ { num }) }, -> _ { acc }) } }
+    .then { |x| concat_results(x) }
     .fmap { |x| x.to_i }
     .fmap { |x| x * 100 }
     .fmap { |x| 98 - (x % 97) }
@@ -93,49 +97,44 @@ def iso7064_mod97_10(text, modulo: 97, minuend: 98, premod: -> x { x * 100 })
     .then { |x| minuend - x }
 end
 
+def compare_to_local_checksum(iban, calculated_checksum)
+  concat_results([calculated_checksum, get_local_checksum(iban)], concat_fn: -> x, y { x == y.to_i })
+    .bind { |x| x ? Success(iban) : Failure(x) }
+
+end
+
+def get_iban_parts(iban, parts, concat_fn: -> x, y { x + y })
+  getters = {
+    bank_code: -> x { get_bank_code(x) },
+    branch_code: -> x { get_branch_code(x) },
+    account_number: -> x { get_account_number(x) },
+  }
+  parts
+    .map { |x| getters[x.to_sym].call(iban) }
+    .then { |x| concat_results(x, concat_fn: concat_fn) }
+end
+
+def generic_national_checksum_check(iban, parts, calcluation_fn)
+  calculated_checksum = get_iban_parts(iban, parts)
+                          .fmap { |x| calcluation_fn.call(x) }
+  compare_to_local_checksum(iban, calculated_checksum)
+end
+
 def albania_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| weighted(x, [9, 7, 3, 1, 9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'branch_code'],
+    -> x { weighted(x, [9, 7, 3, 1, 9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
+  )
 end
 
 def belgium_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| x.to_i }
-                          .fmap { |x| x % 97 }
-                          .fmap { |x| x == 0 ? 97 : x }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'account_number'],
+    -> x { (x.to_i % 97).then { |x| x == 0 ? 97 : x } }
+  )
 end
-
-# def iso7064_mod97_10(str)
-#   ai = 1
-#   check = str[-1].to_i
-#   str[...-1].reverse.each_char do |ch|
-#     ai = (ai * 10) % 97
-#     check += ai * ch.to_i
-#   end
-#   98 - (check % 97)
-# end
-
-# def bosnia_and_herzegovina_validate(iban)
-#   intermediate_checksum = get_bank_code(iban)
-#                             .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-#                             .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-#                             .bind { |x| get_local_checksum(iban).either(-> y { Success(x + y.to_s) }, -> y { Failure(y) }) }
-#                             .fmap { |x| puts x; x }
-#   # .fmap { |x| iso7064_mod97_10(x)}
-#   # .fmap { |x| x.to_i }
-#
-#   calculated_checksum = intermediate_checksum
-#                           .fmap { |x| x + '111000' }
-#                           .fmap { |x| x.to_i }
-#                           .fmap { |x| x % 97 }
-#                           .fmap { |x| puts x; x }
-#                           .fmap { |x| 98 - x }
-#   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
-# end
 
 def croatia_validate(iban)
   def mod_10_11(acc, num)
@@ -172,54 +171,28 @@ def czech_validate(iban)
   Success(iban)
 end
 
-# function _iso7064_mod97_10_generated($input) {
-#   $input = strtoupper($input); # normalize
-#   if(!preg_match('/^[0123456789]+$/',$input)) { return ''; } # bad input
-#   $modulus       = 97;
-#   $radix         = 10;
-#   $output_values = '0123456789';
-#   $p             = 0;
-#   for($i=0; $i<strlen($input); $i++) {
-#     $val = strpos($output_values,substr($input,$i,1));
-#   if($val < 0) { return ''; } # illegal character encountered
-#   $p = (($p + $val) * $radix) % $modulus;
-#   }
-#   $p = ($p*$radix) % $modulus;
-#   $checksum = ($modulus - $p + 1) % $modulus;
-#   $second = $checksum % $radix;
-#   $first = ($checksum - $second) / $radix;
-#   return substr($output_values,$first,1) . substr($output_values,$second,1);
-#   }
-# _iban_nationalchecksum_implementation_mod97_10
-# montenegro, macedionia, serbia, solvenia
-
 def east_timor_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'account_number'],
+    -> x { iso7064_mod97_10(x) }
+  )
 end
 
 def estonia_validate(iban)
-  calculated_checksum = get_branch_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| weighted(x, [7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }, prezip: -> y { y.reverse }) }
-  # .fmap { |x| x.split('') }
-  # .fmap { |x| x.map { |chr| chr.to_i } }
-  # .fmap { |x| x.reverse }
-  # .fmap { |x| x.zip([7, 3, 1].cycle) }
-  # .fmap { |x| x.map { |num, weight| num * weight } }
-  # .fmap { |x| x.sum }
-  # .fmap { |x| x % 10 }
-  # .fmap { |x| x == 0 ? 0 : 10 - x }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['branch_code', 'account_number'],
+    -> x { weighted(x, [7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }, prezip: -> y { y.reverse }) }
+  )
 end
 
 def finland_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| weighted(x, [2, 1], 10, -> y { y == 0 ? 0 : 10 - y }, presum: -> y { y.map { |num| num % 10 + num / 10 } }) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'account_number'],
+    -> x { weighted(x, [2, 1], 10, -> y { y == 0 ? 0 : 10 - y }, presum: -> y { y.map { |num| num % 10 + num / 10 } }) }
+  )
 end
 
 # function _iban_nationalchecksum_implementation_fr($iban,$mode) {
@@ -337,80 +310,67 @@ def italy_validate(iban)
 end
 
 def north_macedonia_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x) }
-
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'account_number'],
+    -> x { iso7064_mod97_10(x) }
+  )
 end
 
 def mauritania_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x, minuend: 97) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'branch_code', 'account_number'],
+    -> x { iso7064_mod97_10(x, minuend: 97) }
+  )
 end
 
 def montenegro_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'account_number'],
+    -> x { iso7064_mod97_10(x) }
+  )
 end
 
 def norway_validate(iban)
-  # TODO: If the first two digits of the account number (not the bank code) are both zeros, then the calculation applies only to the remaining 4 digits of the account number, otherwise it applies to the entire BBAN (bank code + account number).
-  # Check validity of this statement and implement if valid.
   calculated_checksum = get_bank_code(iban)
                           .bind { |x| get_account_number(iban).either(-> y { Success([x, y]) }, -> y { Failure(y) }) }
                           .fmap { |x, y| y.start_with?('00') ? y[2..] : x + y }
-                          .fmap { |x| weighted(x, [5, 4, 3, 2, 7, 6, 5, 4, 3, 2], 11, -> y { y == 0 ? 0 : 11 - y }) }
+                          .fmap { |x| weighted(x, [5, 4, 3, 2, 7, 6, 5, 4, 3, 2], 11, -> y { y == 0 ? 0 : 11 - y }) } # TODO 1 - invalid
   calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("#{iban}: Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
 end
 
 def poland_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| weighted(x, [3, 9, 7, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("#{iban}: Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'branch_code'],
+    -> x { weighted(x, [3, 9, 7, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
+  )
 end
 
 def portugal_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'branch_code', 'account_number'],
+    -> x { iso7064_mod97_10(x) }
+  )
 end
 
 def serbia_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
-end
-
-def slovakia_validate(iban)
-  calculated_checksum_acc_number = get_account_number(iban)
-                                     .fmap { |x| weighted(x, [6, 3, 7, 9, 10, 5, 8, 4, 2, 1], 11, -> y { y == 0 ? 0 : 11 - y }) }
-  calculated_checksum_branch_number = get_branch_code(iban)
-                                        .fmap { |x| weighted(x, [10, 5, 8, 4, 2, 1], 11, -> y { y == 0 ? 0 : 11 - y }) }
-  acc_matches = calculated_checksum_acc_number.bind { |x| x == 0 ? Success(x) : Failure("Niepoprawna suma kontrolna - #{x}. Powinna być 0.") }
-  branch_matches = calculated_checksum_branch_number.bind { |x| x == 0 ? Success(x) : Failure("Niepoprawna suma kontrolna - #{x}. Powinna być 0.") }
-  # TODO - combaing failures
-  if acc_matches.failure? || branch_matches.failure?
-    Failure(acc_matches.either(-> y { branch_matches }, -> y { branch_matches.either(-> z { Failure(y) }, -> z { Failure([y, z]) }) }))
-  end
-  Success(iban)
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'account_number'],
+    -> x { iso7064_mod97_10(x) }
+  )
 end
 
 def slovenia_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'branch_code', 'account_number'],
+    -> x { iso7064_mod97_10(x) }
+  )
 end
 
 def spain_validate(iban)
@@ -435,11 +395,11 @@ def spain_validate(iban)
 end
 
 def tunisia_validate(iban)
-  calculated_checksum = get_bank_code(iban)
-                          .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .bind { |x| get_account_number(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                          .fmap { |x| iso7064_mod97_10(x, minuend: 97) }
-  calculated_checksum.bind { |x| get_local_checksum(iban).either(-> y { x == y.to_i ? Success(iban) : Failure("Niepoprawna suma kontrolna - #{y}. Powinna być #{x}: #{iban}") }, -> y { Failure(y) }) }
+  generic_national_checksum_check(
+    iban,
+    ['bank_code', 'branch_code', 'account_number'],
+    -> x { iso7064_mod97_10(x, minuend: 97) }
+  )
 end
 
 def local_validate(iban)
@@ -465,7 +425,7 @@ def local_validate(iban)
     PT: -> x { portugal_validate(x) },
     SM: -> x { italy_validate(x) }, # San Marino uses the same algorithm as Italy
     RS: -> x { serbia_validate(x) },
-    SK: -> x { slovakia_validate(x) },
+    SK: -> x { czech_validate(x) }, # Slovakia uses the same algorithm as Czechia
     SI: -> x { slovenia_validate(x) },
     ES: -> x { spain_validate(x) },
     TN: -> x { tunisia_validate(x) },
@@ -482,15 +442,16 @@ def validate_iban(number)
 end
 
 done = ['al', 'be', 'ba', 'hr', 'cz', 'tl', 'ee', 'fi', 'fr', 'hu', 'is', 'it', 'mk', 'mr', 'mc', 'me', 'no', 'pl', 'sm', 'rs', 'sk', 'es', 'tn']
+ok = 0
+
 done.each do |country_code|
   file = File.open("./example-ibans/#{country_code}-ibans")
 
   lines = file.readlines
-  ok = 0
   lines.each do |line|
     validate_iban(line).either(-> x { ok += 1 }, -> x { puts "Failure: #{x}" })
   end
-  puts ok
-end
 
+end
+puts ok
 # binding.pry
