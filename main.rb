@@ -257,14 +257,14 @@ def hungary_validate(iban)
   calculate = -> x { weighted(x, [9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
   calculated_checksum_bank_code = get_iban_parts(iban, ['bank_code', 'branch_code']).fmap { |x| calculate.call(x) }
   calculated_checksum_branch_number = get_account_number(iban).fmap { |x| calculate.call(x) }
-  national_checksum = get_account_number(iban) # this is not technically correct since they are not consecutive
+  national_checksum = get_local_checksum(iban) # this is not technically correct since they are not consecutive
 
   return national_checksum if national_checksum.failure?
 
   bank_code_checksum = national_checksum.value![0]
   branch_number_checksum = national_checksum.value![-1]
-  bank_code_matches = calculated_checksum_bank_code.bind { |x| x == bank_code_checksum ? Success(x) : Failure("Niepoprawna suma kontrolna1 - #{x}. Powinna być #{bank_code_checksum}.") }
-  branch_matches = calculated_checksum_branch_number.bind { |x| x == branch_number_checksum ? Success(x) : Failure("Niepoprawna suma kontrolna2 - #{x}. Powinna być #{branch_number_checksum}.") }
+  bank_code_matches = calculated_checksum_bank_code.bind { |x| x == bank_code_checksum.to_i ? Success(x) : Failure("Niepoprawna suma kontrolna1 - #{x}. Powinna być #{bank_code_checksum}.") }
+  branch_matches = calculated_checksum_branch_number.bind { |x| x == branch_number_checksum.to_i ? Success(x) : Failure("Niepoprawna suma kontrolna2 - #{x}. Powinna być #{branch_number_checksum}.") }
   if bank_code_matches.failure? || branch_matches.failure?
     return Failure(bank_code_matches.either(-> _ { branch_matches }, -> y { branch_matches.either(-> z { Failure(y) }, -> z { Failure([y, z, iban]) }) }))
   end
@@ -379,14 +379,14 @@ def spain_validate(iban)
                                     .fmap { |x| weighted(x, [4, 8, 5, 10, 9, 7, 3, 6], 11, -> y { y <= 1 ? y : 11 - y }) }
   calculated_checksum_acc_number = get_account_number(iban)
                                      .fmap { |x| weighted(x, [1, 2, 4, 8, 5, 10, 9, 7, 3, 6], 11, -> y { y <= 1 ? y : 11 - y }) }
-  national_checksum = get_account_number(iban) # this is not technically correct since they are not consecutive
+  national_checksum = get_local_checksum(iban) # this is not technically correct since they are not consecutive
 
   return national_checksum if national_checksum.failure?
 
   bank_code_checksum = national_checksum.value![0]
   acc_number_checksum = national_checksum.value![-1]
-  bank_code_matches = calculated_checksum_bank_code.bind { |x| x == bank_code_checksum ? Success(x) : Failure("ES1Niepoprawna suma kontrolna - #{x}. Powinna być #{bank_code_checksum}.") }
-  branch_matches = calculated_checksum_acc_number.bind { |x| x == acc_number_checksum ? Success(x) : Failure("ES2Niepoprawna suma kontrolna - #{x}. Powinna być #{acc_number_checksum}.") }
+  bank_code_matches = calculated_checksum_bank_code.bind { |x| x == bank_code_checksum.to_i ? Success(x) : Failure("ES1Niepoprawna suma kontrolna - #{x}. Powinna być #{bank_code_checksum}.") }
+  branch_matches = calculated_checksum_acc_number.bind { |x| x == acc_number_checksum.to_i ? Success(x) : Failure("ES2Niepoprawna suma kontrolna - #{x}. Powinna być #{acc_number_checksum}.") }
   # TODO - combaing failures
   if bank_code_matches.failure? || branch_matches.failure?
     return Failure(bank_code_matches.either(-> _ { branch_matches }, -> y { branch_matches.either(-> z { Failure(y) }, -> z { Failure([y, z, iban]) }) }))
