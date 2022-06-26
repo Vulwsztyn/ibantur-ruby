@@ -197,35 +197,6 @@ def finland_validate(iban)
   )
 end
 
-# function _iban_nationalchecksum_implementation_fr($iban,$mode) {
-#   if($mode != 'set' && $mode != 'find' && $mode != 'verify') { return ''; } # blank value on return to distinguish from correct execution
-#   # first, extract the BBAN
-#   $bban = iban_get_bban_part($iban);
-#   # convert to numeric form
-#   $bban_numeric_form = _iban_nationalchecksum_implementation_fr_letters2numbers_helper($bban);
-#   # if the result was null, something is horribly wrong
-#   if(is_null($bban_numeric_form)) { return ''; }
-#   # extract other parts
-#   $bank = substr($bban_numeric_form,0,5);
-#   $branch = substr($bban_numeric_form,5,5);
-#   $account = substr($bban_numeric_form,10,11);
-#   # actual implementation: mod97( (89 x bank number "Code banque") + (15 x branch code "Code guichet") + (3 x account number "Numéro de compte") )
-#   $sum = (89*($bank+0)) + ((15*($branch+0)));
-#   $sum += (3*($account+0));
-#   $expected_nationalchecksum = 97 - ($sum % 97);
-#   if(strlen($expected_nationalchecksum) == 1) { $expected_nationalchecksum = '0' . $expected_nationalchecksum; }
-#   # return
-#   if($mode=='find') {
-#     return $expected_nationalchecksum;
-#   }
-#   elseif($mode=='set') {
-#     return _iban_nationalchecksum_set($iban,$expected_nationalchecksum);
-#   }
-#   elseif($mode=='verify') {
-#     return (iban_get_nationalchecksum_part($iban) == $expected_nationalchecksum);
-#   }
-#   }
-
 def france_validate(iban)
   def french_letter_to_digit(letter)
     return letter.to_i if letter[/^\d$/]
@@ -454,4 +425,3 @@ done.each do |country_code|
 
 end
 puts ok
-# binding.pry
