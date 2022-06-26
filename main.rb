@@ -257,7 +257,7 @@ def hungary_validate(iban)
   calculate = -> x { weighted(x, [9, 7, 3, 1], 10, -> y { y == 0 ? 0 : 10 - y }) }
   calculated_checksum_bank_code = get_iban_parts(iban, ['bank_code', 'branch_code']).fmap { |x| calculate.call(x) }
   calculated_checksum_branch_number = get_account_number(iban).fmap { |x| calculate.call(x) }
-  national_checksum = get_local_checksum(iban) # this is not technically correct since they are not consecutive
+  national_checksum = get_local_checksum(iban) # this is not technically correct since they are not consecutive - HUkk bbbs sssX cccc cccc cccc cccX
 
   return national_checksum if national_checksum.failure?
 
@@ -374,11 +374,11 @@ def slovenia_validate(iban)
 end
 
 def spain_validate(iban)
-  calculated_checksum_bank_code = get_bank_code(iban)
-                                    .bind { |x| get_branch_code(iban).either(-> y { Success(x + y) }, -> y { Failure(y) }) }
-                                    .fmap { |x| weighted(x, [4, 8, 5, 10, 9, 7, 3, 6], 11, -> y { y <= 1 ? y : 11 - y }) }
+  calculate = -> weights, x { weighted(x, weights, 11, -> y { y <= 1 ? y : 11 - y }) }
+  calculated_checksum_bank_code = get_iban_parts(iban, ['bank_code', 'branch_code'])
+                                    .fmap { |x| calculate.call([4, 8, 5, 10, 9, 7, 3, 6], x) }
   calculated_checksum_acc_number = get_account_number(iban)
-                                     .fmap { |x| weighted(x, [1, 2, 4, 8, 5, 10, 9, 7, 3, 6], 11, -> y { y <= 1 ? y : 11 - y }) }
+                                     .fmap { |x| calculate.call([1, 2, 4, 8, 5, 10, 9, 7, 3, 6], x) }
   national_checksum = get_local_checksum(iban) # this is not technically correct since they are not consecutive
 
   return national_checksum if national_checksum.failure?
